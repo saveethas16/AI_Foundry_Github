@@ -1,0 +1,72 @@
+name: AI Code Syntax Checker
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          
+      - name: Get changed files
+        id: changed-files
+        run: |
+          echo "Getting changed files..."
+          git fetch origin main:main
+          git diff --name-only main..HEAD > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
+          
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install openai requests
+          
+      - name: Run AI Syntax Analysis
+        id: ai-check
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          python .github/scripts/syntax_checker.py
+        continue-on-error: true
+          
+      - name: Check if approved
+        id: check-status
+        run: |
+          if [ -f approval_status.txt ]; then
+            STATUS=$(cat approval_status.txt)
+            echo "status=$STATUS" >> $GITHUB_OUTPUT
+          else
+            echo "status=needs_changes" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Auto-approve PR if passed
+        if: steps.check-status.outputs.status == 'approved'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr review $PR_NUMBER --approve --body "✅ Automated approval: All syntax checks passed!"
